@@ -1,0 +1,501 @@
+% Orientacion del proyecto: CPU multiciclo S-MIPS en Logisim Evolution.
+% Compilar con: pdflatex guide.tex (dos veces, para el indice y las referencias).
+\documentclass[11pt,a4paper]{article}
+
+\newcommand{\curso}{Arquitectura de Computadoras --- Curso 2026--2027}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[spanish,es-noshorthands,es-tabla]{babel}
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{booktabs,tabularx,longtable,array}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{tikz}
+\usepackage[hidelinks]{hyperref}
+
+\setlist{itemsep=2pt,topsep=4pt}
+\setlength{\emergencystretch}{3em}
+\setlength{\LTcapwidth}{\linewidth}
+\lstset{basicstyle=\ttfamily\small,columns=fullflexible,frame=single,framerule=0.3pt,
+        backgroundcolor=\color{gray!6},showstringspaces=false,breaklines=true}
+\newcommand{\sig}[1]{\texttt{#1}}
+\newcommand{\req}[1]{\textbf{[#1]}}
+\newenvironment{obligatorio}{\begin{center}\begin{minipage}{0.95\linewidth}\hrule\smallskip}{\smallskip\hrule\end{minipage}\end{center}}
+
+\title{Proyecto: CPU multiciclo S-MIPS en Logisim Evolution\\[4pt]\large Orientación y especificación}
+\author{\curso}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent En este proyecto individual cada estudiante diseña e implementa, dentro de una placa de Logisim Evolution ya construida, una CPU \emph{multiciclo} que ejecuta el repertorio S-MIPS estudiado en clase. Este documento es la especificación completa: dice qué hay que construir, qué está permitido y qué no, cómo se comprueba el funcionamiento, qué se entrega y cómo se evalúa. Las palabras \emph{debe} y \emph{no debe} indican requisitos obligatorios; \emph{puede} indica libertad de diseño. Los requisitos se numeran \req{R1}, \req{R2}, \ldots{} para citarlos sin ambigüedad.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% ===========================================================================
+\section{Objetivo y alcance}
+
+El objetivo es construir una CPU que ejecute correctamente cualquier programa escrito con las instrucciones de S-MIPS (sección~\ref{sec:isa}), cargado en la memoria de la placa, y que se comunique con el exterior mediante el terminal (TTY) y el LED \emph{Halt}.
+
+Se entrega resuelto todo lo que no es la CPU: el reloj, el botón de reset, la memoria, el terminal y el LED. El trabajo del estudiante es exclusivamente el contenido del subcircuito \sig{CPU} y de los subcircuitos que este utilice.
+
+\paragraph{Notación de bits.} $X[i{:}j]$ designa los bits $i$ a $j$ de la señal $X$, ambos incluidos, con $i \ge j$; el bit 0 es el menos significativo. Por ejemplo, \sig{MEM\_ADDR[13:2]} son los 12 bits de la dirección que van del 13 al 2, y $X[k]$ es el bit $k$.
+
+\begin{obligatorio}
+\begin{description}[leftmargin=1.2cm,style=nextline]
+\item[\req{R1}] La CPU debe implementarse dentro del subcircuito \sig{CPU} del archivo \sig{circuit/smips.circ} entregado, usando Logisim Evolution \textbf{5.0.0}.
+\item[\req{R2}] No deben modificarse los circuitos \sig{Board} ni \sig{Memory}. En el subcircuito \sig{CPU} no deben cambiarse el nombre, el ancho ni el sentido de sus pines, ni borrarse y volver a crearse un pin, ni modificarse su apariencia (\emph{Proyecto $\to$ Editar apariencia del circuito}). Los pines sí pueden moverse de sitio dentro del circuito \sig{CPU}.
+\end{description}
+\end{obligatorio}
+
+\noindent El motivo de \req{R2}: la \sig{Board} se conecta a la CPU por la posición de los puertos en la apariencia del subcircuito (el rectángulo que se ve en la placa). Mover un pin dentro del circuito \sig{CPU} no cambia esa apariencia: Logisim mantiene el vínculo entre el pin y su puerto. En cambio, editar la apariencia o borrar un pin y crearlo de nuevo (aunque tenga el mismo nombre) cambia la posición del puerto en el rectángulo, y la placa deja de estar conectada a ese pin.
+
+% ===========================================================================
+\section{Material entregado}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}lX@{}}
+\toprule
+Archivo o carpeta & Contenido \\
+\midrule
+\sig{circuit/smips.circ} & Placa con los circuitos \sig{Board}, \sig{Memory} y \sig{CPU} (vacío, solo con pines). \\
+\sig{programs/} & Programas \sig{.asm}: ejemplos (\sig{hello}, \sig{array\_sum}, \sig{gcd}, \sig{multiply}) y pruebas de las instrucciones (\sig{arithmetic}, \sig{memory}, \sig{branches}). \\
+\sig{images/} & Imágenes de memoria ya ensambladas de los programas de ejemplo. \\
+\sig{tools/assemble.py} & Ensambla un \sig{.asm} con MARS y genera la imagen para la RAM. \\
+\sig{tools/run\_tests.py} & Ejecuta programas en la CPU y compara la salida del TTY con la de MARS. \\
+\sig{open.sh} & Abre un circuito en Logisim; si tiene entidades VHDL, configura Questa y activa la simulación VHDL. \\
+\sig{README.md} & Resumen de la placa y del flujo de trabajo. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+% ===========================================================================
+\section{La placa y la interfaz de la CPU}\label{sec:placa}
+
+\subsection{Circuitos de la placa}
+
+\begin{itemize}
+\item \sig{Board} (circuito principal): reloj, botón \emph{Reset}, la CPU, la memoria, el TTY y el LED \emph{Halt}, conectados por túneles.
+\item \sig{Memory}: una RAM de $4096$ palabras de 32 bits (16~KiB) con escritura por bytes.
+\item \sig{CPU}: el subcircuito a implementar.
+\end{itemize}
+
+\subsection{Pines de la CPU}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}llcX@{}}
+\toprule
+Pin & Sentido & Ancho & Significado \\
+\midrule
+\sig{CLK} & entrada & 1 & Reloj de la placa. \\
+\sig{RESET} & entrada & 1 & Vale 1 mientras el botón \emph{Reset} está pulsado. \\
+\sig{MEM\_RDATA} & entrada & 32 & Palabra de memoria que contiene la dirección \sig{MEM\_ADDR}. \\
+\sig{MEM\_ADDR} & salida & 32 & Dirección de byte para leer o escribir. \\
+\sig{MEM\_WDATA} & salida & 32 & Dato a escribir, colocado en sus carriles de byte. \\
+\sig{MEM\_BE} & salida & 4 & Habilitación de escritura por byte. \\
+\sig{MEM\_WE} & salida & 1 & Habilitación de escritura en memoria. \\
+\sig{TTY\_DATA} & salida & 7 & Código ASCII del carácter a imprimir. \\
+\sig{TTY\_WE} & salida & 1 & Habilitación de escritura en el TTY. \\
+\sig{HALT} & salida & 1 & Enciende el LED \emph{Halt}: el programa terminó. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Comportamiento temporal}
+
+Todos los elementos de la placa que guardan estado actúan en el \textbf{flanco de subida} de \sig{CLK}.
+
+\begin{description}[leftmargin=0.5cm]
+\item[Lectura de memoria.] Es combinacional: \sig{MEM\_RDATA} muestra, en el mismo ciclo, la palabra alineada que contiene la dirección \sig{MEM\_ADDR}. La memoria tiene $4096 = 2^{12}$ palabras y elige la palabra con los 12 bits \sig{MEM\_ADDR[13:2]}. Ignora \sig{MEM\_ADDR[1:0]}, que indican el byte dentro de la palabra, e ignora \sig{MEM\_ADDR[31:14]}, de modo que las direcciones se repiten cada 16~KiB (por ejemplo, \sig{0x4000} es la misma posición que \sig{0x0000}).
+\item[Escritura en memoria.] Si \sig{MEM\_WE}~$=1$ en un flanco de subida, en la palabra \sig{MEM\_ADDR[13:2]} se escriben los bytes $k$ con \sig{MEM\_BE[$k$]}~$=1$, tomando el byte $k$ de \sig{MEM\_WDATA} (bits $8k+7..8k$). Los bytes con \sig{MEM\_BE[$k$]}~$=0$ no cambian. Con \sig{MEM\_WE}~$=0$ no se escribe nada, cualquiera que sea \sig{MEM\_BE}.
+\item[Orden de los bytes.] \emph{Little-endian}: el byte de la dirección $4n+k$ ($k\in\{0,1,2,3\}$) ocupa los bits $8k+7..8k$ de la palabra $n$. Por tanto, \sig{sw} usa \sig{MEM\_BE}~$=$~\sig{1111}; \sig{sb} en la dirección $d$ debe activar solo el bit $d[1{:}0]$ de \sig{MEM\_BE} y colocar el byte en el carril $d[1{:}0]$ de \sig{MEM\_WDATA}; \sig{lb} y \sig{lbu} deben extraer el byte $d[1{:}0]$ de \sig{MEM\_RDATA} y extenderlo. Este trabajo corresponde a la CPU.
+\item[TTY.] Si \sig{TTY\_WE}~$=1$ en un flanco de subida, el TTY imprime el carácter \sig{TTY\_DATA}. El código 10 (\verb|\n|) salta de línea. El botón \emph{Reset} borra el TTY.
+\item[Halt.] El LED muestra el valor de \sig{HALT}.
+\end{description}
+
+\begin{obligatorio}
+\begin{description}[leftmargin=1.2cm,style=nextline]
+\item[\req{R3}] Todos los elementos secuenciales de la CPU deben actualizarse en el flanco de subida de \sig{CLK}, conectados directamente a \sig{CLK}. No deben generarse relojes derivados (ninguna lógica en el camino del reloj).
+\item[\req{R4}] \sig{TTY\_WE} debe valer 1 durante \textbf{exactamente un} flanco de subida por cada carácter impreso, y 0 en cualquier otro momento.
+\item[\req{R5}] \sig{MEM\_WE} debe valer 1 solo en el ciclo en que se ejecuta la escritura de un \sig{sw} o un \sig{sb}.
+\end{description}
+\end{obligatorio}
+
+\subsection{Mapa de memoria y valores iniciales}
+
+El mapa de memoria corresponde a la configuración \emph{Compact, Text at Address 0} de MARS (\emph{Settings $\to$ Memory Configuration}).
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Elemento & Dirección o valor & Nota \\
+\midrule
+Segmento \sig{.text} & \sig{0x0000} & primera instrucción del programa \\
+Segmento \sig{.data} & \sig{0x2000} & datos estáticos \\
+\sig{\$gp} inicial & \sig{0x1800} & \\
+\sig{\$sp} inicial & \sig{0x3FFC} & la pila crece hacia direcciones menores \\
+Tamaño de la memoria & 16~KiB (\sig{0x0000}--\sig{0x3FFF}) & \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{obligatorio}
+\begin{description}[leftmargin=1.2cm,style=nextline]
+\item[\req{R6}] Mientras \sig{RESET}~$=1$, la CPU debe quedar en su estado inicial: $\mathrm{PC}=0$, \sig{\$gp}~$=$~\sig{0x1800}, \sig{\$sp}~$=$~\sig{0x3FFC}, los otros 30 registros a 0 y la unidad de control en su estado inicial, con \sig{MEM\_WE}, \sig{TTY\_WE} y \sig{HALT} a 0. Al pasar \sig{RESET} a 0, la CPU debe comenzar a ejecutar la instrucción de la dirección \sig{0x0000}. El reset puede ser asíncrono (entradas de borrado de los registros) o síncrono.
+\item[\req{R7}] El reset no debe modificar la memoria. El programa se carga en la RAM antes de pulsar \emph{Reset}.
+\end{description}
+\end{obligatorio}
+
+% ===========================================================================
+\section{El repertorio S-MIPS}\label{sec:isa}
+
+Esta sección resume el repertorio estudiado en clase y fija los casos que el material no cubre.
+
+\subsection{Estado arquitectónico}
+
+32 registros de propósito general de 32 bits (\sig{\$0}--\sig{\$31}). El registro \sig{\$0} (\sig{\$zero}) vale siempre 0: leerlo da 0 y escribir en él no tiene efecto. El PC (32 bits) no pertenece al banco de registros. No hay registro de banderas ni registros Hi/Lo.
+
+\subsection{Formatos}
+
+\begin{center}
+\setlength{\tabcolsep}{0pt}
+\begin{tabular}{l|*{6}{>{\centering\arraybackslash}p{2.1cm}|}}
+\multicolumn{1}{l}{} & \multicolumn{1}{c}{\scriptsize bits 31--26} & \multicolumn{1}{c}{\scriptsize 25--21} & \multicolumn{1}{c}{\scriptsize 20--16} & \multicolumn{1}{c}{\scriptsize 15--11} & \multicolumn{1}{c}{\scriptsize 10--6} & \multicolumn{1}{c}{\scriptsize 5--0} \\
+\cline{2-7}
+R\quad & op & rs & rt & rd & shamt & funct \\
+\cline{2-7}
+I\quad & op & rs & rt & \multicolumn{3}{c|}{inmediato (16)} \\
+\cline{2-7}
+J\quad & op & \multicolumn{5}{c|}{dirección (26)} \\
+\cline{2-7}
+\end{tabular}
+\end{center}
+
+\noindent Notación: $R[x]$ es el registro $x$; $M_{32}[d]$ y $M_8[d]$ son la palabra y el byte de la dirección $d$; $\mathrm{SignExt}$ y $\mathrm{ZeroExt}$ extienden 16 bits a 32 con el bit 15 o con ceros; $\{a,b\}$ es la concatenación. Salvo que se indique otra cosa, $\mathrm{PC} \leftarrow \mathrm{PC}+4$. En las instrucciones de memoria, $d = R[rs] + \mathrm{SignExt}(imm)$. Los códigos op y funct están en hexadecimal.
+
+\subsection{Instrucciones}
+
+\begin{longtable}{@{}llllp{7.3cm}@{}}
+\toprule
+Instrucción & Fmt & op & funct & Semántica \\
+\midrule
+\endhead
+\multicolumn{5}{@{}l}{\emph{Aritméticas y lógicas}} \\
+\sig{add rd, rs, rt} & R & 00 & 20 & $R[rd] \leftarrow R[rs] + R[rt]$ \\
+\sig{sub rd, rs, rt} & R & 00 & 22 & $R[rd] \leftarrow R[rs] - R[rt]$ \\
+\sig{and rd, rs, rt} & R & 00 & 24 & $R[rd] \leftarrow R[rs]\ \&\ R[rt]$ \\
+\sig{or rd, rs, rt} & R & 00 & 25 & $R[rd] \leftarrow R[rs]\ |\ R[rt]$ \\
+\sig{slt rd, rs, rt} & R & 00 & 2A & $R[rd] \leftarrow (R[rs] <_s R[rt])\ ?\ 1 : 0$ (con signo) \\
+\sig{sll rd, rt, shamt} & R & 00 & 00 & $R[rd] \leftarrow R[rt] \ll shamt$ \\
+\sig{srl rd, rt, shamt} & R & 00 & 02 & $R[rd] \leftarrow R[rt] \gg_l shamt$ (entran ceros) \\
+\multicolumn{5}{@{}l}{\emph{Con inmediato}} \\
+\sig{addi rt, rs, imm} & I & 08 & --- & $R[rt] \leftarrow R[rs] + \mathrm{SignExt}(imm)$ \\
+\sig{slti rt, rs, imm} & I & 0A & --- & $R[rt] \leftarrow (R[rs] <_s \mathrm{SignExt}(imm))\ ?\ 1 : 0$ \\
+\sig{andi rt, rs, imm} & I & 0C & --- & $R[rt] \leftarrow R[rs]\ \&\ \mathrm{ZeroExt}(imm)$ \\
+\sig{ori rt, rs, imm} & I & 0D & --- & $R[rt] \leftarrow R[rs]\ |\ \mathrm{ZeroExt}(imm)$ \\
+\sig{lui rt, imm} & I & 0F & --- & $R[rt] \leftarrow \{imm, \texttt{0x0000}\}$ \\
+\multicolumn{5}{@{}l}{\emph{Acceso a memoria}} \\
+\sig{lw rt, imm(rs)} & I & 23 & --- & $R[rt] \leftarrow M_{32}[d]$ \\
+\sig{sw rt, imm(rs)} & I & 2B & --- & $M_{32}[d] \leftarrow R[rt]$ \\
+\sig{lb rt, imm(rs)} & I & 20 & --- & $R[rt] \leftarrow \mathrm{SignExt}(M_8[d])$ \\
+\sig{lbu rt, imm(rs)} & I & 24 & --- & $R[rt] \leftarrow \mathrm{ZeroExt}(M_8[d])$ \\
+\sig{sb rt, imm(rs)} & I & 28 & --- & $M_8[d] \leftarrow R[rt][7{:}0]$ \\
+\multicolumn{5}{@{}l}{\emph{Control de flujo}} \\
+\sig{beq rs, rt, etiq} & I & 04 & --- & si $R[rs]=R[rt]$: $\mathrm{PC} \leftarrow \mathrm{PC}+4+(\mathrm{SignExt}(imm)\ll 2)$ \\
+\sig{bne rs, rt, etiq} & I & 05 & --- & si $R[rs]\neq R[rt]$: $\mathrm{PC} \leftarrow \mathrm{PC}+4+(\mathrm{SignExt}(imm)\ll 2)$ \\
+\sig{j etiq} & J & 02 & --- & $\mathrm{PC} \leftarrow \{(\mathrm{PC}+4)[31{:}28], dir, 00\}$ \\
+\sig{jal etiq} & J & 03 & --- & $R[31] \leftarrow \mathrm{PC}+4$; $\mathrm{PC} \leftarrow \{(\mathrm{PC}+4)[31{:}28], dir, 00\}$ \\
+\sig{jr rs} & R & 00 & 08 & $\mathrm{PC} \leftarrow R[rs]$ \\
+\multicolumn{5}{@{}l}{\emph{Entorno}} \\
+\sig{syscall} & R & 00 & 0C & servicio indicado por \sig{\$v0} (sección~\ref{sec:syscall}) \\
+\multicolumn{5}{@{}l}{\emph{Generadas por MARS (obligatorias, ver \req{R9})}} \\
+\sig{addu rd, rs, rt} & R & 00 & 21 & igual que \sig{add} \\
+\sig{addiu rt, rs, imm} & I & 09 & --- & igual que \sig{addi} (extensión con signo) \\
+\bottomrule
+\end{longtable}
+
+\subsection{Casos que fija este documento}
+
+\begin{obligatorio}
+\begin{description}[leftmargin=1.2cm,style=nextline]
+\item[\req{R8}] La CPU debe ejecutar las 23 instrucciones de S-MIPS con la semántica de la tabla anterior.
+\item[\req{R9}] La CPU debe ejecutar \sig{addu} exactamente como \sig{add} y \sig{addiu} exactamente como \sig{addi}. Motivo: MARS traduce las pseudoinstrucciones \sig{move} y \sig{li} a \sig{addu} y \sig{addiu}, que no pertenecen a S-MIPS.
+\item[\req{R10}] Una palabra cuyo par (op, funct) no aparece en la tabla es una \textbf{instrucción ilegal}: la CPU debe detenerse como con \sig{syscall}~10 (\sig{HALT}~$=1$, sin modificar ningún estado). La palabra \sig{0x00000000} es \sig{sll \$zero, \$zero, 0} (\sig{nop}): es legal y no tiene efecto.
+\item[\req{R11}] La instrucción se identifica solo por op y, si op~$=0$, por funct. No es obligatorio comprobar que los campos no usados valgan 0.
+\end{description}
+\end{obligatorio}
+
+\noindent Situaciones que los programas de prueba \textbf{nunca} producen y cuyo comportamiento, por tanto, queda libre: accesos a palabra no alineados (\sig{lw}/\sig{sw} con $d[1{:}0]\neq 0$), saltos a direcciones no múltiplo de 4, desbordamiento aritmético en \sig{add}/\sig{addi}/\sig{sub} (S-MIPS no tiene excepciones: el resultado es el de la suma módulo $2^{32}$, pero MARS detiene el programa, así que no se usará) y accesos fuera de los 16~KiB.
+
+\subsection{Servicios de \texttt{syscall}}\label{sec:syscall}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}clX@{}}
+\toprule
+\sig{\$v0} & Servicio & Efecto que debe producir la CPU \\
+\midrule
+11 & imprimir carácter & \sig{TTY\_DATA}~$\leftarrow$~\sig{\$a0[6:0]} con \sig{TTY\_WE}~$=1$ durante un flanco (\req{R4}); después continúa con la instrucción siguiente. \\
+10 & terminar & \sig{HALT}~$\leftarrow 1$. A partir de ese momento la CPU no debe modificar registros, PC ni memoria, ni escribir en el TTY, y \sig{HALT} debe permanecer en 1 hasta el siguiente reset. \\
+otro & --- & Sin efecto: la CPU continúa con la instrucción siguiente. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\noindent Los servicios 1 (imprimir entero), 4 (imprimir cadena) y 5 (leer entero) de MARS \textbf{no} se implementan en hardware. Los programas los resuelven en software con el servicio 11; \sig{programs/array\_sum.asm} muestra cómo.
+
+% ===========================================================================
+\section{Requisitos de la microarquitectura}
+
+\subsection{CPU multiciclo}
+
+\begin{obligatorio}
+\begin{description}[leftmargin=1.2cm,style=nextline]
+\item[\req{R12}] La CPU debe ser \textbf{multiciclo}: cada instrucción se ejecuta en varios ciclos de reloj, una sola instrucción a la vez (no se permite segmentación ni ejecutar dos instrucciones en paralelo). El número de ciclos puede variar según la instrucción.
+\item[\req{R13}] Se usa la única memoria de la placa para instrucciones y datos. La instrucción en curso debe guardarse en un registro de instrucción (IR) durante todos sus ciclos.
+\item[\req{R14}] La ruta de datos debe tener \textbf{una sola ALU} y ningún otro sumador: el cálculo de $\mathrm{PC}+4$, de los destinos de salto y de las direcciones de memoria se hace con esa ALU en ciclos distintos. Se permite un comparador de igualdad en \sig{Branch\_Control} como alternativa a la salida \emph{zero} de la ALU.
+\item[\req{R15}] La secuencia de ciclos la gobierna una máquina de estados síncrona dentro de \sig{Control\_Unit}, construida con biestables o registros (el estado) y lógica combinacional (próximo estado y salidas). Puede ser de tipo Moore o Mealy, y la codificación de los estados es libre.
+\end{description}
+\end{obligatorio}
+
+\noindent No se exige un número máximo de ciclos por instrucción. Como referencia, una implementación de entre 3 y 5 ciclos por instrucción termina el programa de prueba más largo en unos 8000 ciclos; \sig{run\_tests.py} abandona un programa a los 60\,000 ciclos.
+
+\subsection{Componentes obligatorios}\label{sec:componentes}
+
+La CPU debe organizarse en los siguientes subcircuitos, con \textbf{exactamente estos nombres} y esta jerarquía:
+
+\begin{center}
+\begin{tikzpicture}[every node/.style={draw,rounded corners=2pt,font=\ttfamily\small,minimum height=6mm,inner sep=4pt}]
+\node (cpu) at (0,0) {CPU};
+\node (dec) at (-5.6,-1.4) {Instruction\_Decoder};
+\node (uc) at (-1.9,-1.4) {Control\_Unit};
+\node (cs) at (1.2,-1.4) {Branch\_Control};
+\node (rd) at (4.4,-1.4) {Datapath};
+\node (rf) at (3.0,-2.8) {Register\_File};
+\node (alu) at (5.8,-2.8) {ALU};
+\foreach \n in {dec,uc,cs,rd} \draw (cpu.south) -- (\n.north);
+\foreach \n in {rf,alu} \draw (rd.south) -- (\n.north);
+\end{tikzpicture}
+\end{center}
+
+\begin{longtable}{@{}p{3.8cm}p{11.7cm}@{}}
+\toprule
+Subcircuito & Función mínima obligatoria \\
+\midrule
+\endhead
+\sig{Instruction\_Decoder} & Combinacional, sin estado. Entradas: los campos op y funct de la instrucción. Salidas: la información que necesita la unidad de control (clase de instrucción, operación de la ALU, tipo de extensión, etc.; el conjunto de salidas es libre). Detecta las instrucciones ilegales (\req{R10}). \\
+\sig{Control\_Unit} & La máquina de estados de \req{R15}. A partir del estado y de las salidas del decodificador genera todas las señales de control de la ruta de datos (selectores de multiplexores y habilitaciones de escritura), además de \sig{MEM\_WE}, \sig{TTY\_WE} y \sig{HALT}. \\
+\sig{Branch\_Control} & Combinacional. Decide si se escribe el PC en el ciclo actual a partir de las señales de control y del resultado de la comparación de \sig{beq}/\sig{bne}. \\
+\sig{Datapath} & PC, IR, registros intermedios, multiplexores, extensión del inmediato, alineación de bytes para \sig{lb}/\sig{lbu}/\sig{sb} y cálculo del destino de \sig{j}/\sig{jal}. Contiene \sig{Register\_File} y \sig{ALU}. \\
+\sig{Register\_File} & 32 registros de 32 bits; dos puertos de lectura combinacionales y un puerto de escritura que actúa en el flanco de subida de \sig{CLK} cuando su habilitación vale 1; \sig{\$zero} siempre 0; valores de reset de \req{R6}. \\
+\sig{ALU} & Combinacional. Dos operandos de 32 bits y un código de operación; resultado de 32 bits y salida \emph{zero} (1 si el resultado es 0). Debe implementar al menos suma, resta, AND, OR, comparación con signo (SLT) y desplazamientos lógicos a izquierda y derecha. La codificación de las operaciones es libre. \\
+\bottomrule
+\end{longtable}
+
+\noindent Se pueden crear subcircuitos adicionales con cualquier nombre (por ejemplo \sig{Immediate\_Extender} o \sig{Memory\_Interface}) en cualquier nivel de la jerarquía.
+
+\begin{obligatorio}
+\begin{description}[leftmargin=1.2cm,style=nextline]
+\item[\req{R16}] Deben existir los seis subcircuitos anteriores, con esos nombres y esa jerarquía, y cada uno debe cumplir su función mínima.
+\item[\req{R17}] Dentro de la CPU no se permiten los componentes RAM ni ROM de Logisim. En particular, si \sig{Register\_File} se implementa como circuito, debe construirse con registros o biestables, multiplexores y decodificadores.
+\end{description}
+\end{obligatorio}
+
+\subsection{Uso de VHDL}
+
+\begin{obligatorio}
+\begin{description}[leftmargin=1.2cm,style=nextline]
+\item[\req{R18}] \textbf{A lo sumo dos} de los tres subcircuitos \sig{Register\_File}, \sig{ALU} e \sig{Instruction\_Decoder}, a elección del estudiante, pueden implementarse como entidades VHDL de Logisim (ninguno, uno o dos). Los demás, y todo el resto de la CPU, deben ser circuitos de Logisim. No puede haber ningún otro código VHDL en la CPU.
+\item[\req{R19}] Cada entidad VHDL debe llamarse como el subcircuito que sustituye (\sig{Register\_File}, \sig{ALU} o \sig{Instruction\_Decoder}; VHDL no distingue mayúsculas). Sus puertos deben ser solo de tipo \sig{std\_logic} o \sig{std\_logic\_vector}, sin \emph{generics}. Puede usar únicamente las bibliotecas \sig{ieee.std\_logic\_1164} e \sig{ieee.numeric\_std}, y debe compilar como VHDL-2002 sin errores ni avisos.
+\item[\req{R20}] Las entidades VHDL deben ser descriptivas y sintetizables: no se permiten \sig{wait}, retardos (\sig{after}), archivos ni instrucciones de simulación.
+\end{description}
+\end{obligatorio}
+
+\noindent En Logisim, una entidad se crea desde el menú \emph{Proyecto} (\emph{Añadir entidad VHDL}) y se coloca como cualquier otro componente. Para simularla hace falta Questa: \sig{open.sh} la configura (sección~\ref{sec:flujo}). Si no se usa VHDL, Questa no es necesaria.
+
+\subsection{Componentes de Logisim permitidos}
+
+Dentro de la CPU pueden usarse los componentes de las bibliotecas \emph{Cableado} (incluidos túneles, separadores, constantes y extensores de bits), \emph{Puertas}, \emph{Multiplexores} (multiplexores, demultiplexores, decodificadores, codificadores de prioridad), \emph{Aritmética} (sumador, restador, comparador, desplazador, negador) y \emph{Memoria} salvo RAM y ROM (biestables, registros y contadores). Siempre respetando \req{R14} (una sola ALU, ningún otro sumador) y \req{R17}.
+
+% ===========================================================================
+\section{Herramientas y flujo de trabajo}\label{sec:flujo}
+
+\subsection{Requisitos de software}
+
+\begin{itemize}
+\item Java 21 o superior.
+\item Logisim Evolution \textbf{5.0.0} (variable \sig{LOGISIM\_JAR} con la ruta al \sig{.jar}).
+\item MARS 4.5 (variable \sig{MARS\_JAR}; por defecto \sig{\textasciitilde/Apps/mars/Mars4\_5.jar}).
+\item Solo si se usa VHDL (\req{R18}): Questa Intel/Altera FPGA Starter Edition con su licencia gratuita (variables \sig{QUESTA\_BIN} con la carpeta \sig{bin} y \sig{SALT\_LICENSE\_SERVER} con el archivo de licencia).
+\item Python 3 y una sesión gráfica.
+\end{itemize}
+
+\subsection{Abrir el circuito}
+
+\begin{lstlisting}[language=bash]
+bash open.sh          # abre circuit/smips.circ (y activa la simulacion VHDL si hace falta)
+\end{lstlisting}
+
+\subsection{Ejecutar un programa a mano}
+
+\begin{enumerate}
+\item Ensamblar el programa; por ejemplo, para \sig{programs/hello.asm}:
+\begin{lstlisting}[language=bash]
+python3 tools/assemble.py programs/hello.asm     # genera images/hello.hex
+\end{lstlisting}
+El ensamblador avisa si el código contiene instrucciones que la CPU tratará como ilegales.
+\item En Logisim, entrar en \sig{Memory}, clic derecho sobre la RAM $\to$ \emph{Cargar imagen\ldots} y elegir el \sig{.hex}.
+\item Volver a \sig{Board}, pulsar \emph{Reset} con la herramienta de mano y activar el reloj (\emph{Simular $\to$ Ticks habilitados}).
+\item El texto aparece en el TTY; al terminar se enciende \emph{Halt}.
+\end{enumerate}
+
+\subsection{Comprobación automática}
+
+\begin{lstlisting}[language=bash]
+python3 tools/run_tests.py                         # programs/*.asm y tests/*.asm
+python3 tools/run_tests.py programs/memory.asm   # un solo programa
+python3 tools/run_tests.py --circuito otra.circ    # otro archivo de circuito
+\end{lstlisting}
+
+\noindent Para cada programa, \sig{run\_tests.py} obtiene la salida esperada ejecutándolo en MARS, lo ejecuta en la placa, espera a que \sig{HALT} valga 1 y compara el texto del TTY con el de MARS (se ignoran los espacios al final de cada línea). Un programa es \textbf{correcto} si la CPU se detiene antes de 60\,000 ciclos y el texto coincide. Con entidades VHDL la simulación se hace junto con Questa y es lenta (decenas de ciclos por segundo): la batería completa tarda unos minutos.
+
+\subsection{Escribir programas propios}\label{sec:escribir}
+
+Los programas deben usar solo instrucciones de S-MIPS y las pseudoinstrucciones vistas en clase (\sig{move}, \sig{li}, \sig{la}, \sig{blt}, \sig{bge}, \sig{bgt}, \sig{ble}, \sig{nop}), que MARS traduce a instrucciones de S-MIPS o a \sig{addu}/\sig{addiu}. Para la salida solo están los servicios 10 y 11; el TTY tiene 12 líneas de 48 caracteres.
+
+% ===========================================================================
+\section{Programas de prueba propios}\label{sec:pruebas}
+
+Además de la CPU, el estudiante escribe sus propios programas en ensamblador S-MIPS para probarla. Los programas de \sig{programs/} entregados con el proyecto no cuentan como propios.
+
+\begin{obligatorio}
+\begin{description}[leftmargin=1.2cm,style=nextline]
+\item[\req{R21}] El repositorio debe incluir una carpeta \sig{tests/} con programas \sig{.asm} escritos por el estudiante que, entre todos, ejecuten \textbf{todas las instrucciones} de la tabla de la sección~\ref{sec:isa} (las 23 de S-MIPS, más \sig{addu} y \sig{addiu}) en \textbf{todos los casos} de la tabla~\ref{tab:casos}. Cada programa debe cumplir:
+\begin{enumerate}
+\item Usar solo lo permitido en la sección~\ref{sec:escribir}: instrucciones de S-MIPS, las pseudoinstrucciones vistas en clase, y los servicios 11 y 10 (termina con \sig{syscall}~10).
+\item Imprimir los \textbf{valores calculados} (por ejemplo, en hexadecimal o en decimal), no solo un mensaje fijo: si una instrucción falla, la salida debe ser distinta.
+\item Producir exactamente la misma salida en MARS y en la CPU del estudiante, comprobado con \sig{run\_tests.py}.
+\item Caber en el TTY: como máximo 12 líneas de 48 caracteres.
+\item Empezar con un comentario que enumere las instrucciones y los casos de la tabla~\ref{tab:casos} que cubre.
+\end{enumerate}
+\end{description}
+\end{obligatorio}
+
+\begin{longtable}{@{}p{3.4cm}p{12.1cm}@{}}
+\caption{Casos que deben ejecutar los programas de \sig{tests/}.}\label{tab:casos}\\
+\toprule
+Instrucciones & Casos obligatorios \\
+\midrule
+\endfirsthead
+\toprule
+Instrucciones & Casos obligatorios \\
+\midrule
+\endhead
+\sig{add}, \sig{sub} & Con operandos positivos y con al menos un operando negativo. \\
+\sig{and}, \sig{or} & Con operandos que tengan unos en los 16 bits altos. \\
+\sig{slt}, \sig{slti} & Un caso con resultado 1 y otro con resultado 0; al menos uno con un operando negativo en el que la comparación con signo y sin signo den resultados distintos. \\
+\sig{sll}, \sig{srl} & Con \sig{shamt}~$=0$ y con \sig{shamt}~$\neq 0$; \sig{srl} sobre un valor negativo (deben entrar ceros). \\
+\sig{addi} & Con un inmediato negativo. \\
+\sig{addiu}, \sig{addu} & Mediante las pseudoinstrucciones \sig{li} (constante entre $-2^{15}$ y $2^{15}-1$) y \sig{move}. \\
+\sig{andi}, \sig{ori} & Con un inmediato cuyo bit 15 vale 1 (debe extenderse con ceros). \\
+\sig{lui} & Con un inmediato cuyo bit 15 vale 1. \\
+\sig{lw}, \sig{sw} & Con desplazamiento positivo y con desplazamiento negativo. \\
+\sig{lb}, \sig{lbu} & Sobre un byte cuyo bit 7 vale 1, en al menos dos posiciones distintas dentro de la palabra ($d[1{:}0]$ distinto). \\
+\sig{sb} & En las cuatro posiciones de una misma palabra ($d[1{:}0] = 0, 1, 2, 3$), comprobando después con \sig{lw} que los otros bytes no cambiaron. \\
+\sig{beq}, \sig{bne} & Cada uno tomado y no tomado; al menos un salto hacia atrás. \\
+\sig{j} & Al menos una vez. \\
+\sig{jal}, \sig{jr} & Un procedimiento que llama a otro (no hoja), guardando \sig{\$ra} en la pila y retornando correctamente. \\
+\sig{syscall} & Servicios 11 y 10. \\
+\sig{\$zero} & Una instrucción que escribe en \sig{\$zero}, comprobando después que sigue valiendo 0. \\
+\bottomrule
+\end{longtable}
+
+\noindent El informe incluye una tabla que indica, para cada fila de la tabla~\ref{tab:casos}, en qué programa de \sig{tests/} se cubre.
+
+% ===========================================================================
+\section{Entrega}
+
+\begin{obligatorio}
+\begin{description}[leftmargin=1.2cm,style=nextline]
+\item[\req{R22}] La entrega es un \textbf{enlace a un repositorio de GitHub}, enviado al profesor por \textbf{Telegram} antes de la fecha límite, que se comunicará posteriormente. Si el repositorio es privado, el estudiante debe dar acceso de lectura a la cuenta de GitHub que indique el profesor junto con la fecha. Se evalúa el último \emph{commit} anterior a la fecha límite.
+\item[\req{R23}] El repositorio debe contener, en estas rutas:
+\begin{enumerate}
+\item \sig{circuit/smips.circ}: el circuito con la CPU implementada (\req{R1}, \req{R2}).
+\item \sig{circuit/}\emph{entidad}\sig{.vhd}: un archivo por cada entidad VHDL usada (\sig{register\_file.vhd}, \sig{alu.vhd} o \sig{instruction\_decoder.vhd}), idéntico al código incrustado en \sig{smips.circ}. Si no se usa VHDL, no hay ninguno.
+\item \sig{informe.pdf}: informe de 10 páginas como máximo.
+\item \sig{tests/}: los programas de prueba propios (\req{R21}).
+\item \sig{salida-tests.txt}: la salida completa de \verb|python3 tools/run_tests.py| sobre la versión entregada (incluye \sig{programs/} y \sig{tests/}).
+\end{enumerate}
+Puede contener además el resto del material del proyecto.
+\end{description}
+\end{obligatorio}
+
+\noindent El informe debe incluir, en este orden:
+\begin{enumerate}
+\item Nombre del estudiante y qué componentes se implementaron en VHDL (si alguno), con una breve justificación.
+\item Diagrama de la ruta de datos con los nombres de las señales de control.
+\item Diagrama o tabla de la máquina de estados: estados, transiciones y condiciones.
+\item Tabla con el valor de cada señal de control en cada estado.
+\item Codificación de las operaciones de la ALU y de las salidas del decodificador.
+\item Número de ciclos de cada clase de instrucción.
+\item Tabla de cobertura de los programas de \sig{tests/} (sección~\ref{sec:pruebas}).
+\item Resultados de \sig{run\_tests.py} y limitaciones o errores conocidos. Un error declarado se penaliza menos que uno oculto.
+\end{enumerate}
+
+% ===========================================================================
+\section{Evaluación}
+
+\subsection{Requisitos de admisión}
+
+Una entrega \textbf{no se evalúa} (calificación 0) si incumple \req{R1} o \req{R2}, si el circuito no abre en Logisim Evolution 5.0.0, o si incumple \req{R18} (más de dos componentes en VHDL, o VHDL en componentes no permitidos).
+
+\subsection{Criterios}
+
+\begin{center}
+\begin{tabularx}{\linewidth}{@{}lXr@{}}
+\toprule
+Criterio & Cómo se mide & Peso \\
+\midrule
+Corrección & Programas de \sig{programs/}, más programas no publicados del profesor que usan solo S-MIPS (incluidas \sig{addu}/\sig{addiu}) y los servicios 10 y 11. Cada programa correcto suma por igual. & 40\,\% \\
+Pruebas propias & Programas de \sig{tests/}: cubren todas las filas de la tabla~\ref{tab:casos}, cumplen \req{R21} y dan la misma salida en MARS y en la CPU. Cada fila cubierta suma por igual. & 10\,\% \\
+Estructura & Cumplimiento de \req{R3}--\req{R7} y \req{R12}--\req{R20}: componentes obligatorios con su función, multiciclo con una sola ALU, máquina de estados, reglas de VHDL. & 20\,\% \\
+Claridad del circuito & Nombres de señales y componentes que se entienden, organización en subcircuitos, textos explicativos en Logisim. & 10\,\% \\
+Informe & Completo según la sección anterior y coherente con el circuito entregado. & 10\,\% \\
+Defensa & El estudiante explica, sobre el circuito, cualquier parte de la CPU que se le pregunte. & 10\,\% \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+% ===========================================================================
+\section{Organización}
+
+\begin{itemize}
+\item El proyecto es \textbf{individual}.
+\item La fecha límite de entrega y la de la defensa se comunicarán posteriormente.
+\item La entrega se hace por Telegram con un enlace a GitHub (\req{R22}).
+\end{itemize}
+
+% ===========================================================================
+\section{Preguntas frecuentes}
+
+\begin{description}[leftmargin=0.5cm]
+\item[¿Puedo añadir pines a la CPU o cambiar la placa?] No (\req{R2}). Toda la comunicación pasa por los diez pines de la sección~\ref{sec:placa}.
+\item[¿Puedo mover los pines dentro del circuito CPU?] Sí. Lo que no se puede es editar la apariencia ni borrar y recrear un pin (\req{R2}).
+\item[¿Puedo usar túneles dentro de la CPU?] Sí. Se recomiendan, con nombres que digan qué señal llevan.
+\item[¿Puedo usar un sumador aparte para $\mathrm{PC}+4$?] No (\req{R14}). Ese cálculo se hace con la ALU, en un ciclo en que esta no se usa para otra cosa.
+\item[¿El reset debe ser síncrono o asíncrono?] Cualquiera de los dos, siempre que se cumpla \req{R6}.
+ (\req{R17}).
+\item[¿Dónde va la extensión de signo de \sig{lb}?] En la ruta de datos (puede ser un subcircuito propio). La memoria siempre devuelve la palabra completa.
+\item[¿Qué hago con \sig{li} y \sig{move}?] Nada especial en los programas: la CPU debe aceptar \sig{addiu} y \sig{addu} (\req{R9}).
+\item[¿Qué ocurre con \sig{syscall} 1, 4 o 5?] No tienen efecto en la CPU (sección~\ref{sec:syscall}). Si un programa los usa, su salida no coincidirá con la de MARS; por eso los programas de prueba no los usan.
+\item[¿Puedo hacer en VHDL la ALU, el decodificador y el banco de registros?] No: como mucho dos de los tres (\req{R18}). Tampoco es obligatorio usar VHDL.
+\item[¿Cuenta la velocidad de la CPU?] No, mientras termine cada programa antes de 60\,000 ciclos.
+\end{description}
+
+\end{document}
